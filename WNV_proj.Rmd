@@ -1,0 +1,169 @@
+---
+title: "West Nile Virus Biting and Transmission Rates"
+author: "Anna Boser"
+date: "12/9/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(here)
+library(data.table)
+library(lubridate)
+library(stringr)
+library(dplyr)
+library(sp)
+library(raster)
+library(ggplot2)
+library(suncalc)
+library(tidyr)
+library(purrr)
+library(sf)
+library(matlib)
+```
+
+#Part 1: The relationship between land surface temperature and air temperature
+
+##Step 1: Retrieve the data
+All high qulaity high quality (no clouds or other quality issues) ECOSTRESS measurements at the location of CIMIS monitors in the San Joaquin Valley were matched to the nearest hourly air temperature measurement from the CIMIS station. 
+```{r}
+#get the lost of points for the appears database
+# latlon <- data.table(t(read.csv(here::here("ECOSTRESS", "data", "cimis", "LatLonfromsheets.csv"), skip = 4, row.names = 1)))
+# latlon$ID <- latlon$ID %>% as.numeric()
+# rownames(latlon) <- latlon$ID
+# write.csv(latlon, here::here("ECOSTRESS", "data", "cimis", "LatLon.csv"))
+#Then use this to get the appears points
+
+#get the ecostress data
+get_eco <- function(year){#https://cimis.water.ca.gov/Stations.aspx
+  read.csv(here::here("data", "cimis", paste0("sj-points", year), paste0("SJ-points", year, "-ECO2LSTE-001-results.csv")))
+}
+eco <- rbindlist(lapply(2018:2020, get_eco))
+
+#remove poor quality pixels
+eco <- filter(eco, ECO2LSTE_001_SDS_QC_Mandatory_QA_flags_Description == "Pixel produced, best quality")
+eco$ECOSTRESS <- eco$ECO2LSTE_001_SDS_LST - 273.15 #in celcius not kelvin
+eco <- dplyr::select(eco, Category, ID, Latitude, Longitude, Date, ECOSTRESS)
+eco$dt <- ymd_hms(eco$Date, tz = "UTC") %>% with_tz("America/Los_Angeles")
+eco$date <- date(eco$dt)
+eco$Date <- NULL
+
+#get the cimis data
+get_cimis <- function(year){#https://cimis.water.ca.gov/Stations.aspx
+  rbind(read.csv(here::here("data", "cimis", paste0("SJ_", year, "_6.csv"))), 
+        read.csv(here::here("data", "cimis", paste0("SJ_", year, "_8.csv"))) )
+}
+cimis <- rbindlist(lapply(2018:2020, get_cimis))
+
+#add date time to cimis
+cimis$mid_dt <- ymd_hms(paste(mdy(cimis$Date), 
+                              paste0(as.numeric(str_extract(cimis$Hour..PST., regex("[1-9]+"))) - 1, ":30:00")), 
+                        tz = "America/Los_Angeles")
+
+cimis <- cimis[!is.na(mid_dt),] # remove NAs
+
+#average duplicate cimis values
+cimis <- cimis[, .(Air.Temp..C. = mean(Air.Temp..C.)), by = .(Stn.Id, mid_dt)]
+
+#using the renamed file names, get the list of date times that are closest to the ecostress date times
+get_mid_dts <- function(dt){
+  dt <- cimis$mid_dt[abs(cimis$mid_dt - dt) == min(abs(cimis$mid_dt - dt))][1]
+  dt
+}
+eco$mid_dt <- lapply(eco$dt, get_mid_dts) %>% purrr::reduce(c) #the closest dts to the times the cimis sensors give us
+eco$Stn.Id <- eco$ID
+eco$ID <- NULL
+
+#merge ecostress and cimis data by location and date time
+Comp_temp <- base::merge(x = eco, 
+                         y = dplyr::select(cimis, Stn.Id, mid_dt, Air_Temp = Air.Temp..C.), 
+                         by = c("Stn.Id", "mid_dt"), 
+                         all.x = TRUE, all.y = FALSE) #sometimes there is more than 1 cimis measurement which is what makes the dataset grow. 
+
+Comp_temp <- Comp_temp[!is.na(Air_Temp),]
+
+```
+
+Here's what it looks like:
+```{r}
+ggplot(Comp_temp, aes(x =  ECOSTRESS, y =Air_Temp)) + 
+  geom_point(aes(alpha = .2)) +
+  stat_function(fun = function(x){x}, aes(color = "One to one"), show.legend = TRUE) + 
+  labs(title = "Land surface temperature vs. air temperature in the San Joaquin Valley", 
+       subtitle = "June - September, 2018 - 2020", 
+       caption = "Air temperature values from CIMIS weather stations.
+       Land surface temperature from ECOSTRESS") + 
+  ylab("Land Surface Temperature (C)") + 
+  xlab("Air Temperature (C)") + 
+  ylim(min = 5, max = 45) + 
+  xlim(min = 5, max = 60) + 
+  guides(alpha = FALSE) +
+  theme(legend.title = element_blank())
+```
+
+
+##Step 2: Fit a polynomial to the relationship
+
+To choose my polynomial, I perform graham-schmidt orthogonalization on the sucessive polinomial degress and evaluate the significance of the coefficients. 
+```{r}
+#Graham schmidt
+Comp_temp$eco1_orth <- Comp_temp$ECOSTRESS - Proj(Comp_temp$ECOSTRESS, rep(1, length(Comp_temp$ECOSTRESS)))
+
+Comp_temp$eco2_orth <- Comp_temp$ECOSTRESS^2 - Proj(Comp_temp$ECOSTRESS^2, Comp_temp$eco1_orth) - Proj(Comp_temp$ECOSTRESS^2, rep(1, length(Comp_temp$ECOSTRESS)))
+
+Comp_temp$eco3_orth <- Comp_temp$ECOSTRESS^3 - Proj(Comp_temp$ECOSTRESS^3, Comp_temp$eco1_orth) - Proj(Comp_temp$ECOSTRESS^3, Comp_temp$eco2_orth) - Proj(Comp_temp$ECOSTRESS^3, rep(1, length(Comp_temp$ECOSTRESS)))
+
+Comp_temp$eco4_orth <- Comp_temp$ECOSTRESS^4 - Proj(Comp_temp$ECOSTRESS^4, Comp_temp$eco1_orth) - Proj(Comp_temp$ECOSTRESS^4, Comp_temp$eco2_orth) - Proj(Comp_temp$ECOSTRESS^4, Comp_temp$eco3_orth) - Proj(Comp_temp$ECOSTRESS^4, rep(1, length(Comp_temp$ECOSTRESS)))
+
+Comp_temp$eco5_orth <- Comp_temp$ECOSTRESS^5 - Proj(Comp_temp$ECOSTRESS^5, Comp_temp$eco1_orth) - Proj(Comp_temp$ECOSTRESS^5, Comp_temp$eco2_orth) - Proj(Comp_temp$ECOSTRESS^5, Comp_temp$eco3_orth) - Proj(Comp_temp$ECOSTRESS^5, Comp_temp$eco4_orth) - Proj(Comp_temp$ECOSTRESS^5, rep(1, length(Comp_temp$ECOSTRESS)))
+
+Comp_temp$eco6_orth <- Comp_temp$ECOSTRESS^6 - Proj(Comp_temp$ECOSTRESS^6, Comp_temp$eco1_orth) - Proj(Comp_temp$ECOSTRESS^6, Comp_temp$eco2_orth) - Proj(Comp_temp$ECOSTRESS^6, Comp_temp$eco3_orth) - Proj(Comp_temp$ECOSTRESS^6, Comp_temp$eco4_orth)  - Proj(Comp_temp$ECOSTRESS^6, Comp_temp$eco5_orth) - Proj(Comp_temp$ECOSTRESS^6, rep(1, length(Comp_temp$ECOSTRESS)))
+
+Comp_temp$eco7_orth <- Comp_temp$ECOSTRESS^7 - Proj(Comp_temp$ECOSTRESS^7, Comp_temp$eco1_orth) - Proj(Comp_temp$ECOSTRESS^7, Comp_temp$eco2_orth) - Proj(Comp_temp$ECOSTRESS^7, Comp_temp$eco3_orth) - Proj(Comp_temp$ECOSTRESS^7, Comp_temp$eco4_orth)  - Proj(Comp_temp$ECOSTRESS^7, Comp_temp$eco5_orth) - Proj(Comp_temp$ECOSTRESS^7, Comp_temp$eco6_orth) - Proj(Comp_temp$ECOSTRESS^7, rep(1, length(Comp_temp$ECOSTRESS)))
+
+#polinomial fit
+pol_orth <- lm(Air_Temp ~ eco1_orth + eco2_orth + eco3_orth + eco4_orth + eco5_orth + eco6_orth + eco7_orth, data = Comp_temp)
+summary(pol_orth)
+```
+Uhhh this is honestly pretty weird but given the super small additions from 5 and 6 I'm not going to include them. Since the coefficients remain statistically significant until the cubic, we select this model. 
+
+```{r}
+Comp_temp$ECOSTRESS2 <- Comp_temp$ECOSTRESS^2
+Comp_temp$ECOSTRESS3 <- Comp_temp$ECOSTRESS^3
+pol <- lm(Air_Temp ~ ECOSTRESS + ECOSTRESS2 + ECOSTRESS3, data = Comp_temp)
+summary(pol)
+```
+
+The cubic model's fit: 
+Multiple R-squared:  0.8518,	Adjusted R-squared:  0.8516 
+
+What it looks like: 
+```{r}
+ggplot(Comp_temp, aes(x =  ECOSTRESS, y =Air_Temp)) + 
+  geom_point(aes(alpha = .2)) +
+  stat_function(fun = function(x){6.906e-01 + 1.432e+00*x -2.213e-02*x^2 + 1.473e-04*x^3}, aes(color = "Cubic polynomial"), show.legend = TRUE) + 
+  stat_function(fun = function(x){x}, aes(color = "One to one"), show.legend = TRUE) + 
+  labs(title = "Land surface temperature vs. air temperature in the San Joaquin Valley", 
+       subtitle = "June - September, 2018 - 2020", 
+       caption = "Air temperature values from CIMIS weather stations.
+       Land surface temperature from ECOSTRESS") + 
+  ylab("Land Surface Temperature (C)") + 
+  xlab("Temperature (C)") + 
+  ylim(min = 5, max = 45) + 
+  xlim(min = 5, max = 60) + 
+  guides(alpha = FALSE) +
+  theme(legend.title = element_blank())
+```
+
+
+##Step 3: Evaluate how the relationship changes with various other features
+
+
+#Part 2: Creating and analysing maps of biting and transmission rate
+
+
+
+
+
+
+
