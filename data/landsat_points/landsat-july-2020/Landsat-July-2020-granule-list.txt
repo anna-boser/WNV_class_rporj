@@ -1,0 +1,6 @@
+https://earthexplorer.usgs.gov/download/external/options/ARD_TILE/LC08_CU_002008_20200701_C01_V01/INVSVC/
+https://earthexplorer.usgs.gov/download/external/options/ARD_TILE/LC08_CU_002009_20200701_C01_V01/INVSVC/
+https://earthexplorer.usgs.gov/download/external/options/ARD_TILE/LC08_CU_002010_20200701_C01_V01/INVSVC/
+https://earthexplorer.usgs.gov/download/external/options/ARD_TILE/LC08_CU_003010_20200701_C01_V01/INVSVC/
+https://earthexplorer.usgs.gov/download/external/options/ARD_TILE/LC08_CU_003010_20200703_C01_V01/INVSVC/
+https://earthexplorer.usgs.gov/download/external/options/ARD_TILE/LC08_CU_003011_20200703_C01_V01/INVSVC/
