@@ -1,3 +1,17 @@
+library(here)
+library(data.table)
+library(lubridate)
+library(stringr)
+library(dplyr)
+library(sp)
+library(raster)
+library(ggplot2)
+library(suncalc)
+library(tidyr)
+library(purrr)
+library(sf)
+library(matlib)
+library(tmap)
 
 ag_poly <- st_read(here::here("data", "crop_map", "i15_Crop_Mapping_2016.shp")) %>%
   st_transform(4326)
@@ -69,14 +83,12 @@ get_time_series_df <- function(kind, correction = "corrected"){
   rbindlist(rows)
 }
 
-biting_df <- get_time_series_df("tarsalis_biting_rate", "corrected")
-write.csv(biting_df, here::here("data", "June-Sept_2018-2020", "tars_biting_df.csv"), row.names = FALSE)
-transmission_df <- get_time_series_df("tarsalis_transmission", "corrected")
-write.csv(transmission_df, here::here("data", "June-Sept_2018-2020", "tars_transmission_df.csv"), row.names = FALSE)
-
-tarsalis_df <- rbind(biting_df, transmission_df)
-write.csv(tarsalis_df, here::here("data", "June-Sept_2018-2020", "tars_df.csv"), row.names = FALSE)
-
-temperature_df <- rbind(get_time_series_df("temperature", "corrected"), 
-                        get_time_series_df("temperature", "not_corrected"))
-write.csv(temperature_df, here::here("data", "June-Sept_2018-2020", "tars_df.csv"), row.names = FALSE)
+# biting_df <- get_time_series_df("tarsalis_biting_rate", "corrected")
+# write.csv(biting_df, here::here("data", "June-Sept_2018-2020", "tars_biting_df.csv"), row.names = FALSE)
+# transmission_df <- get_time_series_df("tarsalis_transmission", "corrected")
+# write.csv(transmission_df, here::here("data", "June-Sept_2018-2020", "tars_transmission_df.csv"), row.names = FALSE)
+# 
+# temperature_df <- get_time_series_df("temperature", "corrected")
+# write.csv(temperature_df, here::here("data", "June-Sept_2018-2020", "temperature_df.csv"), row.names = FALSE)
+lst_df <- get_time_series_df("temperature", "not_corrected")
+write.csv(lst_df, here::here("data", "June-Sept_2018-2020", "lst_df.csv"), row.names = FALSE)

@@ -132,7 +132,7 @@ Multiple R-squared:  0.8518,	Adjusted R-squared:  0.8516
 
 What it looks like: 
 ```{r}
-ggplot(Comp_temp, aes(x =  ECOSTRESS, y =Air_Temp)) + 
+ggplot(Comp_temp, aes(x = ECOSTRESS, y =Air_Temp)) + 
   geom_point(aes(alpha = .2)) +
   stat_function(fun = function(x){6.906e-01 + 1.432e+00*x -2.213e-02*x^2 + 1.473e-04*x^3}, aes(color = "Cubic polynomial"), show.legend = TRUE) + 
   stat_function(fun = function(x){x}, aes(color = "One to one"), show.legend = TRUE) + 
@@ -362,13 +362,15 @@ reduced <- Comp_temp %>%
                        Air_Temp = mean(Air_Temp), 
                        NDVI = mean(NDVI), 
                        dayness = mean(dayness))
-full <- lm(Air_Temp ~ NDVI + morning*dayness*ECOSTRESS, 
+full <- lm(Air_Temp ~ vegetated + dayness*ECOSTRESS, 
            data = reduced)
 summary(full)
 
-final <- lm(Air_Temp ~ ECOSTRESS + dayness + vegetated+ dayness*ECOSTRESS, 
+final <- lm(Air_Temp ~ vegetated + dayness*ECOSTRESS, 
            data = Comp_temp)
 summary(final)
+
+lm_results <- data.frame()
 ```
 
 ```{r}
@@ -490,11 +492,11 @@ tx_tars = - (2.94*10^-3) * T * (T - 11.3) * (T - 41.9)
 bx_tars = (1.67*10^-4) * T * (T- 2.3) * (32.0 - T)^(1/2)
 
 plot(0,col="white",xlim=c(0,55),ylim=c(-10,50),
-     xlab="Temperature (C)", ylab="Probability (%)")
+     xlab="Temperature (C)", ylab = "")
 points(T,tx_tars,pch=16,col="blue")
 points(T,bx_tars*100,pch=16,col="red")
 lines(T,bx_tars*100,pch=16,col="red")
-legend(30, 50, legend=c("WNV transmission", "Biting"),
+legend(25, 45, legend=c("WNV transmission probability", "Biting rate x 100"),
        col=c("blue", "red"), lty = 1)
 title("Culex tarsalis biting and West Nile Virus (WNV) transmission probability 
       as a function of temperature")
@@ -602,6 +604,34 @@ lapply(files, temperature)
 ```
 
 I use these new files to make time series of biting and transmission rates. 
+```{r}
+# for lst I only want the overall thing
+getrow <- function(file, kind, correction = "corrected"){
+  print(file)
+  
+  date <- ymd(substr(file, 14, 23))
+  hhmmss <- str_extract(file, regex('[0-9]{2}:{1}[0-9]{2}:{1}[0-9]{2}'))
+  dt <- ymd_hms(paste(date, hhmmss), tz = "America/Los_Angeles")
+  year <- year(date)
+  
+  ras <- raster(paste0(here::here("data", "June-Sept_2018-2020", kind, correction), "/",
+                       file))
+  
+  mean <- cellStats(ras, "mean")
+  
+  row <- data.frame(date, dt, kind, correction, mean)
+}
+
+
+get_time_series_df <- function(kind, correction = "corrected"){
+  files <- list.files(here::here("data", "June-Sept_2018-2020", kind, correction))
+  rows <- lapply(files, getrow, kind, correction)
+  rbindlist(rows)
+}
+
+lst_df <- get_time_series_df(kind = "temperature", correction = "not_corrected")
+write.csv(lst_df, here::here("data", "June-Sept_2018-2020", "lst_df.csv"), row.names = FALSE)
+```
 
 
 ```{r, eval = FALSE}
@@ -683,10 +713,8 @@ write.csv(transmission_df, here::here("data", "June-Sept_2018-2020", "tars_trans
 tarsalis_df <- rbind(biting_df, transmission_df)
 write.csv(tarsalis_df, here::here("data", "June-Sept_2018-2020", "tars_df.csv"), row.names = FALSE)
 
-temperature_df <- rbind(get_time_series_df("temperature", "corrected"), 
-                        get_time_series_df("temperature", "not_corrected"))
-write.csv(temperature_df, here::here("data", "June-Sept_2018-2020", "tars_df.csv"), row.names = FALSE)
-
+temperature_df <- get_time_series_df("temperature", "corrected")
+write.csv(temperature_df, here::here("data", "June-Sept_2018-2020", "temperature_df.csv"), row.names = FALSE)
 ```
 
 Make some nice time series: 
@@ -733,146 +761,302 @@ ggplot(temperature_df,
 
 #plots
 ```{r}
-plot_tar_ts <- function(df, cols, newnames, ts_type = "day"){
+plot_tar_ts <- function(df, cols, newnames, title, ylab, newcols = c(), ts_type = "day"){
+  
   newdf <- pivot_longer(df, cols = all_of(cols), names_transform = newnames, names_to = "Landcover", values_to = "Probability")
-  newdf$Landcover <- ifelse(newdf$Landcover == cols[1], newnames[1], newnames[2])
+  
+  for(i in 1:length(newnames)){
+    newdf$Landcover <- ifelse(newdf$Landcover == cols[i], newnames[i], newdf$Landcover)
+  }
+  
   if(ts_type == "day"){
+    
     plot <- ggplot(newdf, aes(x = hour(dt) + minute(dt)/60, y = Probability, col = Landcover)) + 
-  geom_point(aes(alpha = .2)) + 
-  geom_smooth(method = "lm", formula = y ~ I(sin((2*pi*(x))/24)) + I(cos((2*pi*(x))/24)) + I(sin((2*2*pi*(x))/24)) + I(cos((2*2*pi*(x))/24))) + 
-  xlab("Hour of day") +
-  ylab("Probability") + 
-  labs(title = "Tarsalis biting rates", 
-       subtitle = "Fresno and surrounding area, June - September, 2018 - 2020") + 
-  guides(alpha = FALSE)
+      geom_point(aes(alpha = .2)) + 
+      geom_smooth(method = "lm", 
+              formula = y ~ I(sin((2*pi*(x))/24)) + I(cos((2*pi*(x))/24)) + I(sin((2*2*pi*(x))/24)) + I(cos((2*2*pi*(x))/24)), 
+              se = FALSE) + 
+      xlab("Hour of day") +
+      ylab(ylab) + 
+      labs(title = "Tarsalis biting rates", 
+      subtitle = "Fresno and surrounding area, June - September, 2018 - 2020") + 
+      scale_color_manual(values = newcols) + 
+      guides(alpha = FALSE)
+    
   } else if(ts_type == "month"){
+    
     plot <- ggplot(newdf, aes(x = month(dt) + day(dt)/30, y = Probability, col = Landcover)) + 
-  geom_point(aes(alpha = .2)) + 
-  xlab("Hour of day") +
-  ylab("Probability") + 
-  labs(title = "Tarsalis biting rates", 
-       subtitle = "Fresno and surrounding area, June - September, 2018 - 2020") + 
-  guides(alpha = FALSE)
+      geom_point(aes(alpha = .2)) + 
+      xlab("Month") +
+      ylab(ylab) + 
+      labs(title = title, 
+      subtitle = "Fresno and surrounding area, June - September, 2018 - 2020") + 
+      guides(alpha = FALSE)
+    
   }
   plot(plot)
 }
 
-plot_tar_ts(df = biting_df, cols = c("ag", "urban"), newnames = c("Agriculture", "Urban area"), ts_type = "day")
+plot_tar_ts(df = biting_df, 
+            cols = c("ag", "urban"), 
+            newnames = c("Agriculture", "Urban area"), 
+            title = "", 
+            ylab = "Biting Rate", 
+            newcols = c("blue", "red"), 
+            ts_type = "day")
 
-plot_tar_ts(df = biting_df, cols = c("ag", "urban"), newnames = c("Agriculture", "Urban area"), ts_type = "month")
+plot_tar_ts(df = biting_df, 
+            cols = c("mean"), 
+            newnames = c("Mean"), 
+            title = "", 
+            ylab = "Biting Rate", 
+            ts_type = "month")
 
-plot_tar_ts(df = biting_df, cols = c("ag_veg", "ag_nveg"), newnames = c("Vegetated agriculture", "Fallowed agriculture"), ts_type = "day")
+plot_tar_ts(df = biting_df, 
+            cols = c("veg", "nveg"), 
+            newnames = c("Vegetated", "Not vegetated"), 
+            title = "", 
+            ylab = "Biting Rate",
+            newcols = c("grey", "forestgreen"), 
+            ts_type = "day")
 
-plot_tar_ts(df = biting_df, cols = c("veg", "nveg"), newnames = c("Vegetated", "Not vegetated"), ts_type = "day")
+plot_tar_ts(df = biting_df, 
+            cols = c("ag_veg", "ag_nveg"), 
+            newnames = c("Vegetated agriculture", "Unvegetated agriculture"), 
+            title = "", 
+            ylab = "Biting Rate",
+            newcols = c("lightblue", "darkblue"),
+            ts_type = "day")
 
-plot_tar_ts(df = biting_df, cols = c("urb_veg", "urb_nveg"), newnames = c("Vegetated urban area", "Unvegetated urban area"), ts_type = "day")
+plot_tar_ts(df = biting_df, 
+            cols = c("urb_veg", "urb_nveg"), 
+            newnames = c("Vegetated urban area", "Unvegetated urban area"), 
+            title = "", 
+            ylab = "Biting Rate",
+            newcols = c("tomato", "darkred"),
+            ts_type = "day")
 
-plot_tar_ts(df = biting_df, cols = c("urb_veg", "ag_veg"), newnames = c("Vegetated urban area", "Vegetated agriculture"), ts_type = "day")
+plot_tar_ts(df = biting_df, 
+            cols = c("ag_veg", "urb_veg"), 
+            newnames = c("Vegetated agriculture", "Vegetated urban area"), 
+            title = "", 
+            ylab = "Biting Rate",
+            newcols = c("darkblue", "darkred"),
+            ts_type = "day")
 
-```
+plot_tar_ts(df = biting_df, 
+            cols = c("ag_nveg", "urb_nveg"), 
+            newnames = c("Unvegetated agriculture", "Unvegetated urban area"), 
+            title = "", 
+            ylab = "Biting Rate",
+            newcols = c("lightblue", "tomato"),
+            ts_type = "day")
 
-paired t-tests as to whether they're really different by time
-groups: 
--one hour before to three hours after sunrise
--one hour before to three hours after sunrise
--day
--night
-
-```{r, eval = FALSE}
-#calculate time of day as "dayness." Does the orthogonal component add anything to the model? 
-# add sunrise and sunset times to Comp_temp in order to get a day flag
-sunrise_sunset <- function(row){
-  getSunlightTimes(date = ymd(row[[7]]),
-                   lat = row[[3]], 
-                   lon = row[[4]],
-                   # data = Comp_temp,
-                   keep = c("sunrise", "sunset"),
-                   tz = "America/Los_Angeles")
-}
-
-sunrise_set <- c()
-for(i in 1:nrow(Comp_temp)){
-  sunrise_set <- rbind(sunrise_set, sunrise_sunset(Comp_temp[i,]))
-}
-
-Comp_temp <- merge(Comp_temp, sunrise_set, by.x = c("date", "Latitude", "Longitude"), by.y = c("date", "lat", "lon")) #merge sunrise/sunset data 
-
-Comp_temp$closest_sunset <- Comp_temp$sunset
-for (i in 1:length(Comp_temp$closest_sunset)){
-  sm1 <- Comp_temp$sunset[i] - lubridate::days(1)
-    if (abs(difftime(Comp_temp$dt[i], Comp_temp$sunset[i], units = "hours")) > abs(difftime(Comp_temp$dt[i], sm1, units = "hours"))){
-    Comp_temp$closest_sunset[i] <- sm1
-    }
-}
-
-
-Comp_temp$daytime <- Comp_temp$dt > Comp_temp$sunrise & Comp_temp$dt < Comp_temp$closest_sunset #if the measurement is between sunrise and sunset
-Comp_temp$time_of_day <- ifelse(Comp_temp$daytime, "Day", "Night")
-```
-
-Hour into the day: 
-```{r, eval = FALSE}
-dayness <- c()
-for (i in 1:nrow(Comp_temp)){
-  dt = Comp_temp$dt[i]
-  sunset = Comp_temp$closest_sunset[i]
-  sunrise = Comp_temp$sunrise[i]
-  
-  if (abs(difftime(dt, sunrise, units = "hours")) < abs(difftime(dt, sunset, units = "hours"))){ #if the time is closer to sunrise than to sunset
-    dayn = difftime(dt, sunrise, units = "hours") #how many hours after the sunrise is it (negative values mean night)
-  } else {
-    dayn = difftime(sunset, dt, units = "hours") #how many hours before sunset is it (negative values mean night)
-  }
-  dayness <- c(dayness, dayn)
-}
-Comp_temp$dayness <- dayness
 ```
 
 I will make a matrix with the estimated differences, color coded for whether it's statistically significant
 ```{r}
 #first need to add the whole sunrise sunset shebang to these new dfs
-sunriseify <- function(df){
+sunify <- function(df){
   sunrise_sunset <- function(row){
+    
     getSunlightTimes(date = ymd(row[[1]]),
                    lat = 36.7378, 
                    lon = -119.7871, #fresno coordinates
                    keep = c("sunrise", "sunset"),
                    tz = "America/Los_Angeles")
      }
-   }
 
     sunrise_set <- c()
     for(i in 1:nrow(df)){
-    sunrise_set <- rbind(sunrise_set, sunrise_sunset(Comp_temp[i,]))
-  
-    df <- merge(df, sunrise_set, by = "date") #merge sunrise/sunset data 
-
-    df$closest_sunset <- df$sunset
-    for (i in 1:length(df$closest_sunset)){
-      sm1 <- df$sunset[i] - lubridate::days(1)
-        if (abs(difftime(df$dt[i], df$sunset[i], units = "hours")) > abs(difftime(df$dt[i], sm1, units = "hours"))){
-       df$closest_sunset[i] <- sm1
+      sunrise_set <- rbind(sunrise_set, sunrise_sunset(df[i,]))
     }
-}
-}
+    
+    df <- merge(df, sunrise_set, by = "date") #merge sunrise/sunset data 
+    df
+  }
 
-create_tplot <- function(df = biting_df, int = c(-1, 2), suncat = c("sunrise", "sunrise")){ #example: biting df one hour before and two hours after sunrise
+biting_df <- sunify(biting_df)
+```
 
+Create a tod (time of day) 
+```{r}
+# this functions adds a time of day to a dataset by first taking intervals that fall within the day, defined by starting ints[[i]][1] hours after suncats[[i]][1] and ending ints[[i]][2] hours after suncats[[i]][2], and assigns all remaining times to elsecat. 
+add_tod <- function(df, timenames = c("dawn", "dusk", "day"), elsecat = "night", ints = list(c(-1, 2), c(-1, 3), c(2, -1)), suncats = list(c("sunrise", "sunrise"), c("sunset", "sunset"), c("sunrise", "sunset"))){
+  df$tod <- elsecat
   
+  for(i in 1:length(timenames)){
+    int <- ints[[i]]
+    suncat <- suncats[[i]]
+    time <- hour(df$dt) + minute(df$dt)/60
+    
+    df$tod <-  ifelse(time > hour(df[,suncat[1]]) + minute(df[,suncat[1]])/60 + int[1] & time < hour(df[,suncat[2]]) + minute(df[,suncat[2]])/60 + int[2], 
+                      timenames[i], 
+                      df$tod)
+  }
+  
+  df
 }
 
-ggplot(df, aes(x = , fill = diff)) + 
-  geom_tile() + 
-  geom_text(aes(label = significance))
+biting_df <- add_tod(biting_df)
+```
+
+box plots
+```{r}
+make_box_plot <- function(df, cols, newnames, title, ylab, newcols = c()){
+  newdf <- pivot_longer(df, cols = all_of(cols), names_transform = newnames, names_to = "Landcover", values_to = "Probability")
+  
+  for(i in 1:length(newnames)){
+    newdf$Landcover <- ifelse(newdf$Landcover == cols[i], newnames[i], newdf$Landcover)
+  }
+  
+  ggplot(newdf, aes(x = Landcover, y = Probability, col = Landcover)) + 
+    geom_boxplot() + 
+    xlab("Hour of day") +
+    ylab(ylab) + 
+    labs(title = "Tarsalis biting rates", 
+    subtitle = "Fresno and surrounding area, June - September, 2018 - 2020") + 
+    scale_color_manual(values = newcols) + 
+    facet_wrap(~tod)
+}
+
+make_box_plot(df = biting_df, 
+            cols = c("veg", "nveg"), 
+            newnames = c("Vegetated", "Not vegetated"), 
+            title = "", 
+            ylab = "Biting Rate",
+            newcols = c("grey", "forestgreen"))
+
+make_box_plot(df = biting_df, 
+            cols = c("ag_veg", "ag_nveg"), 
+            newnames = c("Vegetated agriculture", "Unvegetated agriculture"), 
+            title = "", 
+            ylab = "Biting Rate",
+            newcols = c("lightblue", "darkblue"))
+
+make_box_plot(df = biting_df, 
+            cols = c("urb_veg", "urb_nveg"), 
+            newnames = c("Vegetated urban", "Unvegetated urban"), 
+            title = "", 
+            ylab = "Biting Rate",
+            newcols = c("tomato", "darkred"))
+
+make_box_plot(df = biting_df, 
+            cols = c("ag_veg", "urb_veg"), 
+            newnames = c("Vegetated agriculture", "Vegetated urban"), 
+            title = "", 
+            ylab = "Biting Rate",
+            newcols = c("darkblue", "darkred"))
+
+make_box_plot(df = biting_df, 
+            cols = c("ag_nveg", "urb_nveg"), 
+            newnames = c("Unvegetated agriculture", "Unvegetated urban"), 
+            title = "", 
+            ylab = "Biting Rate",
+            newcols = c("lightblue", "tomato"))
+```
+
+t tests
+```{r}
+create_tplot <- function(rate_df = biting_df, list_of_types = c("mean", "ag", "nag", "veg", "nveg", "urban", "urb_veg", "urb_nveg", "ag_veg", "ag_nveg"), title = "Biting rate"){ #example: biting df one hour before and two hours after sunrise
+  #what I'm doing here is creating a new df with col 1 the first input in the t-test, col2 the second input, the difference between the two, and the significance. 
+  plot_df <- data.frame()
+  for(i in (list_of_types)){
+    for(j in (list_of_types)){
+      for(t in unique(rate_df$tod)){
+        df <- filter(rate_df, tod == t)
+        test <- t.test(df[, i], df[,j], paired = TRUE)
+      plot_df <- rbind(plot_df, data.frame(tod = t, in1 = i, in2 = j, diff = test$estimate, significance = ifelse(test$p.value < 0.05, "*", "")))
+      }
+    }
+  }
+  
+  ggplot(plot_df, aes(x = in1, y = in2, fill = diff)) + 
+     geom_tile() + 
+     geom_text(aes(label = significance))  + 
+    scale_fill_gradient2(low = "green", high = "red") + 
+    labs(title = title)
+}
+
+create_tplot()
+create_tplot(transmission_df)
+
 ```
 
 
-
-plot tarsalis for two days
+Plots
 
 ```{r, eval = FALSE}
-trans <- raster(here::here("data", "June-Sept_2018-2020", "tarsalis_transmission", "corrected",  "eco_20_56_06_2019_09_17.tif"))
-bite <- raster(paste0(here::here("data", "June-Sept_2018-2020", "tarsalis_biting_rate", "corrected"), "/", "eco_20_56_06_2019_09_17.tif"))
+Comp_temp <- filter(Comp_temp, dt %in% biting_df$dt, year(dt) == 2020)
+night <- Comp_temp$dt[Comp_temp$dayness == min(Comp_temp$dayness)][1]
+day <- Comp_temp$dt[Comp_temp$dayness == max(Comp_temp$dayness)][1]
+dawn <- filter(Comp_temp, morning == "sunrise")$dt[
+  abs(filter(Comp_temp, morning == "sunrise")$dayness) == min(abs(filter(Comp_temp, morning == "sunrise")$dayness))][1]
+dusk <- filter(Comp_temp, morning == "sunset")$dt[
+  abs(filter(Comp_temp, morning == "sunset")$dayness) == min(abs(filter(Comp_temp, morning == "sunset")$dayness))][1]
+
+chosen <- c(night, dawn, day, dusk)
+
+four_panel <- function(type, correction, limits){
+  files <- list.files(here::here("data", "June-Sept_2018-2020", type, correction))
+  
+  date <- ymd(substr(files, 14, 23))
+  hhmmss <- str_extract(files, regex('[0-9]{2}:{1}[0-9]{2}:{1}[0-9]{2}'))
+  dt <- ymd_hms(paste(date, hhmmss), tz = "America/Los_Angeles")
+  
+  files <- files[dt %in% chosen]
+  
+  night <- raster(paste0(here::here("data", "June-Sept_2018-2020", type, correction), "/",
+                            files[1]))
+  dawn <- raster(paste0(here::here("data", "June-Sept_2018-2020", type, correction), "/",
+                         files[2]))
+  day <- raster(paste0(here::here("data", "June-Sept_2018-2020", type, correction), "/",
+                         files[3]))
+  dusk <- raster(paste0(here::here("data", "June-Sept_2018-2020", type, correction), "/",
+                         files[4]))
+  
+  pal <- colorRampPalette(c("white", "red"))
+  
+  plot(dawn, 
+       col = pal(50), 
+       xlim=c(0,55),
+       ylim=c(-10,50),
+       zlim=limits,
+       xlab="Longitude", 
+       ylab = "Latitude")
+  title(paste0("Dawn (", chosen[2],")"))
+
+  plot(day, 
+       col = pal(50), 
+       xlim=c(0,55),
+       ylim=c(-10,50),
+       zlim=limits,
+       xlab="Longitude", 
+       ylab = "Latitude")
+  title(paste0("Day (", chosen[3],")"))
+  
+  plot(dusk, 
+       col = pal(50), 
+       xlim=c(0,55),
+       ylim=c(-10,50),
+       zlim=limits,
+       xlab="Longitude", 
+       ylab = "Latitude")
+  title(paste0("Dusk (", chosen[4],")"))
+  
+  plot(night, 
+       col = pal(50), 
+       xlim=c(0,55),
+       ylim=c(-10,50),
+       zlim=limits,
+       xlab="Longitude", 
+       ylab = "Latitude")
+  title(paste0("Night (", chosen[1],")"))
+}
+
+four_panel("tarsalis_biting_rate", "corrected", limits = c(0,.3))
+four_panel("tarsalis_transmission", "corrected", limits = c(0,20))
+four_panel("temperature", "corrected", limits = c(0,50))
 ```
 
 
